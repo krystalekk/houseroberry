@@ -4,10 +4,20 @@ local robberyState = {}
 
 local function notify(source, description, type)
     TriggerClientEvent('ox_lib:notify', source, {
-        title = 'House Robbery',
+        title = 'Rabunek domu',
         description = description,
         type = type or 'inform'
     })
+end
+
+local function isPlayerNear(source, targetCoords, maxDistance)
+    local ped = GetPlayerPed(source)
+    if ped <= 0 then
+        return false
+    end
+
+    local playerCoords = GetEntityCoords(ped)
+    return #(playerCoords - targetCoords) <= maxDistance
 end
 
 local function getHouseById(houseId)
@@ -150,6 +160,11 @@ lib.callback.register('house_robbery:server:tryStartRobbery', function(source, h
         return { success = false }
     end
 
+    if not isPlayerNear(source, house.entry, Config.EntryDistance) then
+        notify(source, 'Musisz podejsc pod drzwi domu.', 'error')
+        return { success = false }
+    end
+
     local state = getState(houseId)
     local currentTime = os.time()
     local hour = tonumber(os.date('%H'))
@@ -205,12 +220,28 @@ lib.callback.register('house_robbery:server:tryStartRobbery', function(source, h
     }
 end)
 
-lib.callback.register('house_robbery:server:onFailedEntry', function(_, houseId)
+lib.callback.register('house_robbery:server:onFailedEntry', function(source, houseId)
+    local house = getHouseById(houseId)
+    if not house or not isPlayerNear(source, house.entry, Config.EntryDistance + 0.5) then
+        return { alarm = false }
+    end
+
     local alarm = registerStealthBreak(houseId, Config.AlarmChanceWhenFail, 'Nieudana proba wlamania uruchomila alarm.')
     return { alarm = alarm }
 end)
 
-lib.callback.register('house_robbery:server:onFailedSearch', function(_, houseId)
+lib.callback.register('house_robbery:server:onFailedSearch', function(source, houseId, spotId)
+    local house = getHouseById(houseId)
+    local state = getState(houseId)
+    if not house or state.activeRobber ~= source then
+        return { alarm = false }
+    end
+
+    local spot = getSpotById(house, spotId)
+    if not spot or not isPlayerNear(source, spot.coords, Config.SearchDistance + 0.5) then
+        return { alarm = false }
+    end
+
     local alarm = registerStealthBreak(houseId, Config.AlarmChanceWhenFail, 'Nieudane przeszukanie uruchomilo alarm.')
     return { alarm = alarm }
 end)
@@ -235,6 +266,10 @@ lib.callback.register('house_robbery:server:searchSpot', function(source, houseI
     local spot = getSpotById(house, spotId)
     if not spot then
         return { success = false, message = 'Nie znaleziono schowka.' }
+    end
+
+    if not isPlayerNear(source, spot.coords, Config.SearchDistance) then
+        return { success = false, message = 'Podejdz blizej do miejsca przeszukania.' }
     end
 
     if state.searchedSpots[spotId] then

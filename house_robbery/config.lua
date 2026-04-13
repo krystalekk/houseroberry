@@ -3,8 +3,10 @@ Config = {}
 Config.Debug = false
 Config.RequiredPolice = 0
 Config.RequiredItem = 'lockpick'
-Config.RequiredHourStart = 22
-Config.RequiredHourEnd = 5
+Config.RequiredHourStart = 0
+Config.RequiredHourEnd = 24
+Config.EntryDistance = 2.5
+Config.SearchDistance = 2.0
 
 Config.EntryDuration = 3500
 Config.ExitDuration = 2200
@@ -94,11 +96,7 @@ Config.Houses = {
 }
 
 function Config.IsAllowedHour(hour)
-    if Config.RequiredHourStart > Config.RequiredHourEnd then
-        return hour >= Config.RequiredHourStart or hour < Config.RequiredHourEnd
-    end
-
-    return hour >= Config.RequiredHourStart and hour < Config.RequiredHourEnd
+    return true
 end
 
 function Config.GetSpotLabel(spotType)

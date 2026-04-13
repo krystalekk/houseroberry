@@ -15,7 +15,7 @@ local targetHandles = {}
 
 local function notify(description, type)
     lib.notify({
-        title = 'House Robbery',
+        title = 'Rabunek domu',
         description = description,
         type = type or 'inform'
     })
