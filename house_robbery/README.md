@@ -1,12 +1,26 @@
 # house_robbery
 
-Prosty skrypt rabowania domow pod `es_extended`, `ox_lib` i `ox_inventory`.
+Zaawansowany skrypt rabowania domow pod `es_extended`, `ox_lib` i `ox_inventory`.
+
+## Co dostajesz
+
+- pelny flow napadu z czasem na rabunek
+- system alarmu i alertu dla policji
+- skillchecki przy wlamaniu, sejfie i przeszukiwaniu
+- rozne tier-y domow i pule lootu
+- dedykowany HUD NUI pokazujacy status rabunku
+- wsparcie dla `ox_target` jesli zasob jest uruchomiony
+- fallback na klasyczne `E`, jesli nie chcesz targeta
 
 ## Wymagania
 
 - `es_extended`
 - `ox_lib`
 - `ox_inventory`
+
+## Opcjonalnie
+
+- `ox_target`
 
 ## Instalacja
 
@@ -20,28 +34,25 @@ ensure es_extended
 ensure house_robbery
 ```
 
-3. Upewnij sie, ze w `ox_inventory/data/items.lua` masz przedmioty uzyte w configu:
-- `lockpick`
-- `goldchain`
-- `diamond_ring`
-- `rolex`
-- `black_money` lub zmien nagrody pod swoj serwer
+3. Jesli chcesz target:
 
-## Konfiguracja
+```cfg
+ensure ox_target
+```
 
-W pliku `config.lua` zmienisz:
+4. Upewnij sie, ze masz itemy z configu w `ox_inventory/data/items.lua`.
 
-- liczbe wymaganej policji
-- cooldown
-- godziny rabunku
-- wymagany item
-- nagrody
-- domy i pozycje przeszukiwania
+## Gdzie konfigurowac
 
-## Jak dziala
+- balans i timery: `config.lua`
+- domy, spoty, sejfy i tier: `config.lua`
+- logike klienta: `client.lua`
+- logike sesji, alarmu i lootu: `server.lua`
+- wyglad HUD: `web/style.css`
 
-- Gracz podchodzi do domu i wciska `E`
-- System sprawdza godzine, cooldown, policje i `lockpick`
-- Po wejsciu do interioru gracz przeszukuje punkty
-- Kazdy punkt mozna przeszukac tylko raz
-- Po wyjsciu wlacza sie cooldown na dom
+## Uwagi
+
+- policja dostaje waypoint na dom po alarmie
+- loot jest liczony przez pule nagrod
+- safe spot moze miec osobny reward pool
+- po wyjsciu lub disconnectcie wlacza sie cooldown

@@ -4,7 +4,7 @@ local robberyState = {}
 
 local function notify(source, description, type)
     TriggerClientEvent('ox_lib:notify', source, {
-        title = 'Rabunek domu',
+        title = 'House Robbery',
         description = description,
         type = type or 'inform'
     })
@@ -18,12 +18,20 @@ local function getHouseById(houseId)
     end
 end
 
+local function getSpotById(house, spotId)
+    for _, spot in ipairs(house.spots) do
+        if spot.id == spotId then
+            return spot
+        end
+    end
+end
+
 local function countPolice()
     local players = ESX.GetExtendedPlayers()
     local amount = 0
 
     for _, xPlayer in pairs(players) do
-        if xPlayer.job and xPlayer.job.name == 'police' then
+        if xPlayer.job and xPlayer.job.name == Config.DispatchJob then
             amount = amount + 1
         end
     end
@@ -36,30 +44,102 @@ local function getState(houseId)
         robberyState[houseId] = {
             cooldown = 0,
             activeRobber = nil,
-            searchedSpots = {}
+            searchedSpots = {},
+            alarmTriggered = false,
+            expiresAt = 0,
+            brokenStealth = 0
         }
     end
 
     return robberyState[houseId]
 end
 
-local function randomReward()
-    local available = {}
+local function getRewardPool(poolName)
+    return Config.RewardPools[poolName] or Config.RewardPools.common
+end
 
-    for _, reward in ipairs(Config.Rewards) do
+local function rollRewards(poolName)
+    local pool = getRewardPool(poolName)
+    local rewards = {}
+
+    for _, reward in ipairs(pool) do
         if math.random(1, 100) <= reward.chance then
-            available[#available + 1] = {
+            rewards[#rewards + 1] = {
                 item = reward.item,
                 count = math.random(reward.min, reward.max)
             }
         end
     end
 
-    if #available == 0 then
-        return nil
+    if #rewards == 0 and pool[1] then
+        rewards[1] = {
+            item = pool[1].item,
+            count = pool[1].min
+        }
     end
 
-    return available[math.random(1, #available)]
+    return rewards
+end
+
+local function buildRewardMessage(rewards)
+    local parts = {}
+
+    for _, reward in ipairs(rewards) do
+        parts[#parts + 1] = ('%sx %s'):format(reward.count, reward.item)
+    end
+
+    return table.concat(parts, ', ')
+end
+
+local function policeAlert(house, houseId)
+    local players = ESX.GetExtendedPlayers()
+
+    for _, xPlayer in pairs(players) do
+        if xPlayer.job and xPlayer.job.name == Config.DispatchJob then
+            TriggerClientEvent('house_robbery:client:policeAlert', xPlayer.source, {
+                houseId = houseId,
+                label = house.label,
+                street = house.street,
+                coords = { x = house.entry.x, y = house.entry.y, z = house.entry.z }
+            })
+        end
+    end
+end
+
+local function triggerAlarm(houseId, reason)
+    local house = getHouseById(houseId)
+    local state = getState(houseId)
+    if not house then
+        return false
+    end
+
+    if state.alarmTriggered then
+        return true
+    end
+
+    state.alarmTriggered = true
+
+    if state.activeRobber then
+        TriggerClientEvent('house_robbery:client:alarmTriggered', state.activeRobber, houseId, reason)
+    end
+
+    policeAlert(house, houseId)
+    return true
+end
+
+local function registerStealthBreak(houseId, chance, reason)
+    local state = getState(houseId)
+    state.brokenStealth = state.brokenStealth + 1
+
+    if math.random(1, 100) <= chance then
+        return triggerAlarm(houseId, reason)
+    end
+
+    if state.brokenStealth >= Config.StealthBreakWindow then
+        return triggerAlarm(houseId, 'Za duzo halasu. Alarm zostal aktywowany.')
+    end
+
+    return false
 end
 
 lib.callback.register('house_robbery:server:tryStartRobbery', function(source, houseId)
@@ -67,7 +147,7 @@ lib.callback.register('house_robbery:server:tryStartRobbery', function(source, h
     local house = getHouseById(houseId)
 
     if not xPlayer or not house then
-        return false
+        return { success = false }
     end
 
     local state = getState(houseId)
@@ -76,40 +156,66 @@ lib.callback.register('house_robbery:server:tryStartRobbery', function(source, h
 
     if not Config.IsAllowedHour(hour) then
         notify(source, 'Ten dom mozesz obrabiac tylko noca.', 'error')
-        return false
+        return { success = false }
     end
 
     if state.activeRobber and state.activeRobber ~= source then
         notify(source, 'Ktos juz jest w tym domu.', 'error')
-        return false
+        return { success = false }
     end
 
     if state.cooldown > currentTime then
         local minutes = math.ceil((state.cooldown - currentTime) / 60)
         notify(source, ('Ten dom jest spalony. Wroc za %s min.'):format(minutes), 'error')
-        return false
+        return { success = false }
     end
 
     if countPolice() < Config.RequiredPolice then
         notify(source, ('Za malo policji na sluzbie. Wymagane: %s'):format(Config.RequiredPolice), 'error')
-        return false
+        return { success = false }
     end
 
     local itemCount = exports.ox_inventory:Search(source, 'count', Config.RequiredItem)
     if itemCount < 1 then
         notify(source, ('Potrzebujesz przedmiotu: %s'):format(Config.RequiredItem), 'error')
-        return false
+        return { success = false }
     end
 
-    exports.ox_inventory:RemoveItem(source, Config.RequiredItem, 1)
+    if not exports.ox_inventory:RemoveItem(source, Config.RequiredItem, 1) then
+        notify(source, 'Nie udalo sie zuzyc lockpicka.', 'error')
+        return { success = false }
+    end
 
     state.activeRobber = source
     state.searchedSpots = {}
-    notify(source, 'Zamek puscil. Masz malo czasu, wiec dzialaj szybko.', 'success')
-    return true
+    state.expiresAt = currentTime + Config.RobberyDuration
+    state.brokenStealth = 0
+    state.alarmTriggered = math.random(1, 100) <= (house.alarmChance or Config.AlarmChance)
+
+    if state.alarmTriggered then
+        policeAlert(house, houseId)
+    end
+
+    return {
+        success = true,
+        session = {
+            alarmTriggered = state.alarmTriggered,
+            duration = Config.RobberyDuration
+        }
+    }
 end)
 
-lib.callback.register('house_robbery:server:searchSpot', function(source, houseId, spotIndex)
+lib.callback.register('house_robbery:server:onFailedEntry', function(_, houseId)
+    local alarm = registerStealthBreak(houseId, Config.AlarmChanceWhenFail, 'Nieudana proba wlamania uruchomila alarm.')
+    return { alarm = alarm }
+end)
+
+lib.callback.register('house_robbery:server:onFailedSearch', function(_, houseId)
+    local alarm = registerStealthBreak(houseId, Config.AlarmChanceWhenFail, 'Nieudane przeszukanie uruchomilo alarm.')
+    return { alarm = alarm }
+end)
+
+lib.callback.register('house_robbery:server:searchSpot', function(source, houseId, spotId)
     local xPlayer = ESX.GetPlayerFromId(source)
     local house = getHouseById(houseId)
 
@@ -122,26 +228,48 @@ lib.callback.register('house_robbery:server:searchSpot', function(source, houseI
         return { success = false, message = 'Nie rabujesz teraz tego domu.' }
     end
 
-    if state.searchedSpots[spotIndex] then
-        return { success = false, message = 'To miejsce juz zostalo przeszukane.' }
+    if state.expiresAt < os.time() then
+        return { success = false, message = 'Za pozno. Okno rabunku juz minelo.' }
     end
 
-    state.searchedSpots[spotIndex] = true
-
-    local reward = randomReward()
-    if not reward then
-        return { success = false, message = 'Nic wartosciowego tu nie bylo.' }
+    local spot = getSpotById(house, spotId)
+    if not spot then
+        return { success = false, message = 'Nie znaleziono schowka.' }
     end
 
-    local canCarry = exports.ox_inventory:CanCarryItem(source, reward.item, reward.count)
-    if not canCarry then
-        return { success = false, message = 'Nie masz miejsca w ekwipunku.' }
+    if state.searchedSpots[spotId] then
+        return { success = false, message = 'To miejsce zostalo juz wyczyszczone.' }
     end
 
-    exports.ox_inventory:AddItem(source, reward.item, reward.count)
+    local rewards = rollRewards(spot.rewardPool or house.lootPool)
+
+    for _, reward in ipairs(rewards) do
+        if not exports.ox_inventory:CanCarryItem(source, reward.item, reward.count) then
+            return { success = false, message = ('Brak miejsca na %s.'):format(reward.item) }
+        end
+    end
+
+    for _, reward in ipairs(rewards) do
+        exports.ox_inventory:AddItem(source, reward.item, reward.count)
+    end
+
+    state.searchedSpots[spotId] = true
+
+    local totalItems = 0
+    for _, reward in ipairs(rewards) do
+        totalItems = totalItems + reward.count
+    end
+
+    local alarm = false
+    if not state.alarmTriggered and math.random(1, 100) <= math.floor((house.alarmChance or Config.AlarmChance) / 2) then
+        alarm = triggerAlarm(houseId, 'System alarmowy wykryl ruch w domu.')
+    end
+
     return {
         success = true,
-        message = ('Zdobywasz %sx %s.'):format(reward.count, reward.item)
+        alarm = alarm,
+        totalItems = totalItems,
+        message = ('Zabierasz: %s'):format(buildRewardMessage(rewards))
     }
 end)
 
@@ -156,6 +284,9 @@ RegisterNetEvent('house_robbery:server:finishRobbery', function(houseId)
     state.activeRobber = nil
     state.cooldown = os.time() + Config.RobberyCooldown
     state.searchedSpots = {}
+    state.alarmTriggered = false
+    state.expiresAt = 0
+    state.brokenStealth = 0
 end)
 
 AddEventHandler('playerDropped', function()
@@ -166,6 +297,9 @@ AddEventHandler('playerDropped', function()
             state.activeRobber = nil
             state.cooldown = os.time() + Config.RobberyCooldown
             state.searchedSpots = {}
+            state.alarmTriggered = false
+            state.expiresAt = 0
+            state.brokenStealth = 0
         end
     end
 end)

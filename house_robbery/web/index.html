@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>House Robbery HUD</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app" class="hidden">
+        <div class="backdrop"></div>
+        <section class="panel">
+            <div class="eyebrow">House Robbery Suite</div>
+            <header class="topbar">
+                <div>
+                    <h1 id="label">Unknown Property</h1>
+                    <p id="owner">Owner</p>
+                </div>
+                <div class="timer-wrap">
+                    <span>Time Left</span>
+                    <strong id="timer">00:00</strong>
+                </div>
+            </header>
+
+            <div class="meta-grid">
+                <article class="card">
+                    <span class="card-label">Street</span>
+                    <strong id="street">Unknown</strong>
+                </article>
+                <article class="card">
+                    <span class="card-label">Tier</span>
+                    <strong id="tier">standard</strong>
+                </article>
+                <article class="card">
+                    <span class="card-label">Alarm</span>
+                    <strong id="alarm">Offline</strong>
+                </article>
+            </div>
+
+            <div class="stats">
+                <div class="stat">
+                    <span>Looted Spots</span>
+                    <strong id="searched">0 / 0</strong>
+                </div>
+                <div class="stat accent">
+                    <span>Total Items</span>
+                    <strong id="loot">0</strong>
+                </div>
+            </div>
+
+            <div class="progress-shell">
+                <div id="progress-bar" class="progress-bar"></div>
+            </div>
+
+            <footer class="footer">
+                <span id="status-text">Stay quiet. Work fast.</span>
+            </footer>
+        </section>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -5,8 +5,16 @@ lua54 'yes'
 
 name 'house_robbery'
 author 'Codex'
-description 'ESX + ox_lib + ox_inventory house robbery script for FiveM'
-version '1.0.0'
+description 'Advanced ESX + ox_lib + ox_inventory house robbery script for FiveM'
+version '2.0.0'
+
+ui_page 'web/index.html'
+
+files {
+    'web/index.html',
+    'web/style.css',
+    'web/app.js'
+}
 
 shared_scripts {
     '@ox_lib/init.lua',
