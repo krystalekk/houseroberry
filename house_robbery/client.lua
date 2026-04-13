@@ -2,6 +2,7 @@ local ESX = exports.es_extended:getSharedObject()
 ESX.PlayerData = ESX.GetPlayerData() or {}
 
 local activeHouse
+local activeContract
 local robberyState = {
     active = false,
     searched = 0,
@@ -11,7 +12,11 @@ local robberyState = {
     expiresAt = 0
 }
 
-local targetHandles = {}
+local entryTargetHandles = {}
+local robberyTargetHandles = {}
+local brokerTargetHandle
+local contractBlip
+local brokerPed
 
 local function notify(description, type)
     lib.notify({
@@ -107,16 +112,67 @@ local function pulseAlarm(enabled)
     end
 end
 
-local function clearTargetZones()
+local function clearObjectiveBlip()
+    if contractBlip and DoesBlipExist(contractBlip) then
+        RemoveBlip(contractBlip)
+    end
+
+    contractBlip = nil
+end
+
+local function setObjectiveBlip(contract)
+    clearObjectiveBlip()
+
+    if not contract or not contract.entry then
+        return
+    end
+
+    contractBlip = AddBlipForCoord(contract.entry.x, contract.entry.y, contract.entry.z)
+    SetBlipSprite(contractBlip, 40)
+    SetBlipScale(contractBlip, 0.85)
+    SetBlipColour(contractBlip, 5)
+    SetBlipRoute(contractBlip, true)
+    SetBlipRouteColour(contractBlip, 5)
+    BeginTextCommandSetBlipName('STRING')
+    AddTextComponentSubstringPlayerName(('Kontrakt: %s'):format(contract.label))
+    EndTextCommandSetBlipName(contractBlip)
+end
+
+local function setContract(contract, silent)
+    activeContract = contract
+
+    if contract then
+        setObjectiveBlip(contract)
+        if not silent then
+            notify(('Nowy kontrakt: %s'):format(contract.label), 'success')
+        end
+    else
+        clearObjectiveBlip()
+    end
+end
+
+local function clearEntryTargets()
     if not Config.UseTarget then
         return
     end
 
-    for _, id in ipairs(targetHandles) do
+    for _, id in ipairs(entryTargetHandles) do
         exports.ox_target:removeZone(id)
     end
 
-    targetHandles = {}
+    entryTargetHandles = {}
+end
+
+local function clearRobberyTargets()
+    if not Config.UseTarget then
+        return
+    end
+
+    for _, id in ipairs(robberyTargetHandles) do
+        exports.ox_target:removeZone(id)
+    end
+
+    robberyTargetHandles = {}
 end
 
 local function finishLocalRobbery()
@@ -130,18 +186,54 @@ local function finishLocalRobbery()
         expiresAt = 0
     }
 
-    clearTargetZones()
+    clearRobberyTargets()
     setUiVisible(false)
 end
 
-local function createTargetZones(house)
+local function canInteractHouse(house)
+    if not Config.RequireContract then
+        return true
+    end
+
+    return activeContract and activeContract.houseId == house.id
+end
+
+local function createHouseTargets()
     if not Config.UseTarget then
         return
     end
 
-    clearTargetZones()
+    clearEntryTargets()
 
-    targetHandles[#targetHandles + 1] = exports.ox_target:addSphereZone({
+    for _, house in ipairs(Config.Houses) do
+        entryTargetHandles[#entryTargetHandles + 1] = exports.ox_target:addSphereZone({
+            coords = house.entry,
+            radius = 1.2,
+            debug = false,
+            options = {
+                {
+                    icon = 'fa-solid fa-user-ninja',
+                    label = ('Wlam do %s'):format(house.label),
+                    canInteract = function()
+                        return canInteractHouse(house)
+                    end,
+                    onSelect = function()
+                        TriggerEvent('house_robbery:client:enterHouse', house.id)
+                    end
+                }
+            }
+        })
+    end
+end
+
+local function createRobberyTargets(house)
+    if not Config.UseTarget then
+        return
+    end
+
+    clearRobberyTargets()
+
+    robberyTargetHandles[#robberyTargetHandles + 1] = exports.ox_target:addSphereZone({
         coords = house.exit,
         radius = 1.2,
         debug = false,
@@ -157,7 +249,7 @@ local function createTargetZones(house)
     })
 
     for index, spot in ipairs(house.spots) do
-        targetHandles[#targetHandles + 1] = exports.ox_target:addSphereZone({
+        robberyTargetHandles[#robberyTargetHandles + 1] = exports.ox_target:addSphereZone({
             coords = spot.coords,
             radius = 0.9,
             debug = false,
@@ -181,8 +273,125 @@ local function runSkillcheck(sequence)
     return lib.skillCheck(sequence, { 'w', 'a', 's', 'd' })
 end
 
-local function enterHouse(house)
-    if activeHouse then
+local function getHouseById(houseId)
+    for _, house in ipairs(Config.Houses) do
+        if house.id == houseId then
+            return house
+        end
+    end
+end
+
+local function refreshContract(silent)
+    local contract = lib.callback.await('house_robbery:server:getContract', false)
+    setContract(contract, silent)
+end
+
+local function openBrokerMenu()
+    local options = {
+        {
+            title = 'Wez nowe zlecenie',
+            description = 'Broker przypisze Ci wolny dom do obrabowania.',
+            icon = 'user-secret',
+            onSelect = function()
+                local response = lib.callback.await('house_robbery:server:requestContract', false)
+                if not response or not response.success then
+                    notify((response and response.message) or 'Nie udalo sie pobrac kontraktu.', 'error')
+                    return
+                end
+
+                setContract(response.contract)
+                SetNewWaypoint(response.contract.entry.x, response.contract.entry.y)
+
+                if response.reused then
+                    notify('Masz juz aktywny kontrakt. Wyznaczam Ci trase.', 'inform')
+                else
+                    notify(('Dostales robote na: %s'):format(response.contract.label), 'success')
+                end
+            end
+        }
+    }
+
+    if activeContract then
+        options[#options + 1] = {
+            title = 'Pokaz aktywny kontrakt',
+            description = ('Cel: %s | %s'):format(activeContract.label, activeContract.street),
+            icon = 'location-dot',
+            onSelect = function()
+                setObjectiveBlip(activeContract)
+                SetNewWaypoint(activeContract.entry.x, activeContract.entry.y)
+                notify('Trasa do kontraktu ustawiona.', 'inform')
+            end
+        }
+
+        options[#options + 1] = {
+            title = 'Anuluj kontrakt',
+            description = 'Usuwa aktualne zlecenie i odblokowuje nowe.',
+            icon = 'xmark',
+            onSelect = function()
+                lib.callback.await('house_robbery:server:cancelContract', false)
+                setContract(nil)
+                notify('Kontrakt anulowany.', 'inform')
+            end
+        }
+    end
+
+    lib.registerContext({
+        id = 'house_robbery_broker',
+        title = 'Broker zlecen',
+        options = options
+    })
+
+    lib.showContext('house_robbery_broker')
+end
+
+local function spawnBrokerPed()
+    if not Config.UseMissionBroker then
+        return
+    end
+
+    if brokerPed and DoesEntityExist(brokerPed) then
+        return
+    end
+
+    local model = joaat(Config.MissionBroker.ped)
+    lib.requestModel(model, 10000)
+
+    brokerPed = CreatePed(0, model, Config.MissionBroker.coords.x, Config.MissionBroker.coords.y, Config.MissionBroker.coords.z - 1.0, Config.MissionBroker.heading, false, true)
+    SetEntityAsMissionEntity(brokerPed, true, true)
+    SetEntityInvincible(brokerPed, true)
+    FreezeEntityPosition(brokerPed, true)
+    SetBlockingOfNonTemporaryEvents(brokerPed, true)
+
+    if Config.MissionBroker.scenario and Config.MissionBroker.scenario ~= '' then
+        TaskStartScenarioInPlace(brokerPed, Config.MissionBroker.scenario, 0, true)
+    end
+
+    if Config.UseTarget then
+        brokerTargetHandle = exports.ox_target:addSphereZone({
+            coords = Config.MissionBroker.coords,
+            radius = 1.3,
+            debug = false,
+            options = {
+                {
+                    icon = Config.MissionBroker.icon,
+                    label = 'Otworz zlecenia',
+                    onSelect = function()
+                        openBrokerMenu()
+                    end
+                }
+            }
+        })
+    end
+end
+
+local function enterHouse(houseId)
+    local house = getHouseById(houseId)
+    if not house or activeHouse then
+        return
+    end
+
+    if Config.RequireContract and (not activeContract or activeContract.houseId ~= house.id) then
+        notify('Najpierw wez kontrakt na ten dom.', 'error')
         return
     end
 
@@ -247,7 +456,7 @@ local function enterHouse(house)
         spot.done = false
     end
 
-    createTargetZones(house)
+    createRobberyTargets(house)
     updateUi()
 
     notify('Jestes w srodku. Bierz loot i pilnuj czasu.', 'success')
@@ -294,7 +503,8 @@ local function leaveHouse()
 
     TriggerServerEvent('house_robbery:server:finishRobbery', houseId)
     finishLocalRobbery()
-    notify('Wyszedles z domu.', 'inform')
+    setContract(nil)
+    notify('Wyszedles z domu i zamknales kontrakt.', 'inform')
 end
 
 local function searchSpot(index)
@@ -371,6 +581,7 @@ local function searchSpot(index)
     notify(result.message or 'Loot zabrany.', 'success')
 end
 
+RegisterNetEvent('house_robbery:client:enterHouse', enterHouse)
 RegisterNetEvent('house_robbery:client:leaveHouse', leaveHouse)
 RegisterNetEvent('house_robbery:client:searchSpot', searchSpot)
 
@@ -404,6 +615,13 @@ RegisterNetEvent('esx:setJob', function(job)
     ESX.PlayerData.job = job
 end)
 
+RegisterNetEvent('esx:playerLoaded', function(playerData)
+    ESX.PlayerData = playerData or ESX.GetPlayerData() or {}
+    refreshContract(true)
+    createHouseTargets()
+    spawnBrokerPed()
+end)
+
 CreateThread(function()
     while true do
         if ESX.IsPlayerLoaded and ESX.IsPlayerLoaded() then
@@ -418,12 +636,20 @@ CreateThread(function()
     end
 
     ESX.PlayerData = ESX.GetPlayerData() or {}
+    refreshContract(true)
+    createHouseTargets()
+    spawnBrokerPed()
 end)
 
 CreateThread(function()
     while true do
         local sleep = 1000
         local coords = GetEntityCoords(cache.ped)
+
+        if activeContract and activeContract.expiresAt <= os.time() then
+            setContract(nil)
+            notify('Kontrakt wygasl. Wroc do brokera po nowy.', 'error')
+        end
 
         if activeHouse then
             updateUi()
@@ -460,14 +686,31 @@ CreateThread(function()
                 end
             end
         else
+            if Config.UseMissionBroker then
+                local brokerDistance = #(coords - Config.MissionBroker.coords)
+                if not Config.UseTarget and brokerDistance < 8.0 then
+                    sleep = 0
+                    DrawMarker(2, Config.MissionBroker.coords.x, Config.MissionBroker.coords.y, Config.MissionBroker.coords.z + 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 255, 215, 90, 180, false, true, 2, false, nil, nil, false)
+                    drawText3D(Config.MissionBroker.coords + vec3(0.0, 0.0, 0.45), '[E] Broker zlecen')
+
+                    if brokerDistance < 1.6 and IsControlJustReleased(0, 38) then
+                        openBrokerMenu()
+                    end
+                end
+            end
+
             local house, distance = getClosestHouse(coords)
             if house and distance < 12.0 and not Config.UseTarget then
                 sleep = 0
-                DrawMarker(2, house.entry.x, house.entry.y, house.entry.z + 0.15, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.20, 0.20, 0.20, 255, 90, 90, 200, false, true, 2, false, nil, nil, false)
-                drawText3D(house.entry + vec3(0.0, 0.0, 0.35), ('[E] Wlam do %s'):format(house.label))
+                local canUse = canInteractHouse(house)
+                local color = canUse and { 255, 90, 90 } or { 110, 110, 110 }
+                local text = canUse and ('[E] Wlam do %s'):format(house.label) or 'Ten dom nie jest z Twojego kontraktu'
 
-                if distance < 1.5 and IsControlJustReleased(0, 38) then
-                    enterHouse(house)
+                DrawMarker(2, house.entry.x, house.entry.y, house.entry.z + 0.15, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.20, 0.20, 0.20, color[1], color[2], color[3], 200, false, true, 2, false, nil, nil, false)
+                drawText3D(house.entry + vec3(0.0, 0.0, 0.35), text)
+
+                if canUse and distance < 1.5 and IsControlJustReleased(0, 38) then
+                    enterHouse(house.id)
                 end
             end
         end
@@ -477,34 +720,21 @@ CreateThread(function()
     end
 end)
 
-CreateThread(function()
-    if not Config.UseTarget then
-        return
-    end
-
-    for _, house in ipairs(Config.Houses) do
-        exports.ox_target:addSphereZone({
-            coords = house.entry,
-            radius = 1.2,
-            debug = false,
-            options = {
-                {
-                    icon = 'fa-solid fa-user-ninja',
-                    label = ('Wlam do %s'):format(house.label),
-                    onSelect = function()
-                        enterHouse(house)
-                    end
-                }
-            }
-        })
-    end
-end)
-
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then
         return
     end
 
     setUiVisible(false)
-    clearTargetZones()
+    clearEntryTargets()
+    clearRobberyTargets()
+    clearObjectiveBlip()
+
+    if brokerTargetHandle and Config.UseTarget then
+        exports.ox_target:removeZone(brokerTargetHandle)
+    end
+
+    if brokerPed and DoesEntityExist(brokerPed) then
+        DeleteEntity(brokerPed)
+    end
 end)

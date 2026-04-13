@@ -1,6 +1,7 @@
 local ESX = exports.es_extended:getSharedObject()
 
 local robberyState = {}
+local playerContracts = {}
 
 local function notify(source, description, type)
     TriggerClientEvent('ox_lib:notify', source, {
@@ -152,6 +153,118 @@ local function registerStealthBreak(houseId, chance, reason)
     return false
 end
 
+local function clearContract(source)
+    playerContracts[source] = nil
+end
+
+local function getContract(source)
+    local contract = playerContracts[source]
+    if not contract then
+        return nil
+    end
+
+    if contract.expiresAt <= os.time() then
+        clearContract(source)
+        return nil
+    end
+
+    return contract
+end
+
+local function canAssignHouse(source, house)
+    local state = getState(house.id)
+    local currentTime = os.time()
+
+    if state.activeRobber and state.activeRobber ~= source then
+        return false
+    end
+
+    if state.cooldown > currentTime then
+        return false
+    end
+
+    return true
+end
+
+local function getContractPayload(contract)
+    if not contract then
+        return nil
+    end
+
+    local house = getHouseById(contract.houseId)
+    if not house then
+        return nil
+    end
+
+    return {
+        houseId = house.id,
+        label = house.label,
+        owner = house.owner,
+        street = house.street,
+        tier = house.tier,
+        entry = { x = house.entry.x, y = house.entry.y, z = house.entry.z },
+        expiresAt = contract.expiresAt
+    }
+end
+
+local function assignContract(source)
+    local candidates = {}
+
+    for _, house in ipairs(Config.Houses) do
+        if canAssignHouse(source, house) then
+            candidates[#candidates + 1] = house
+        end
+    end
+
+    if #candidates == 0 then
+        return nil, 'Brak dostepnych domow. Wszystko jest aktualnie spalone.'
+    end
+
+    local house = candidates[math.random(1, #candidates)]
+    local contract = {
+        houseId = house.id,
+        createdAt = os.time(),
+        expiresAt = os.time() + Config.ContractDuration
+    }
+
+    playerContracts[source] = contract
+    return getContractPayload(contract)
+end
+
+lib.callback.register('house_robbery:server:getContract', function(source)
+    return getContractPayload(getContract(source))
+end)
+
+lib.callback.register('house_robbery:server:requestContract', function(source)
+    local contract = getContract(source)
+    if contract then
+        return {
+            success = true,
+            contract = getContractPayload(contract),
+            reused = true
+        }
+    end
+
+    local payload, errorMessage = assignContract(source)
+    if not payload then
+        return {
+            success = false,
+            message = errorMessage
+        }
+    end
+
+    return {
+        success = true,
+        contract = payload,
+        reused = false
+    }
+end)
+
+lib.callback.register('house_robbery:server:cancelContract', function(source)
+    clearContract(source)
+    return true
+end)
+
 lib.callback.register('house_robbery:server:tryStartRobbery', function(source, houseId)
     local xPlayer = ESX.GetPlayerFromId(source)
     local house = getHouseById(houseId)
@@ -163,6 +276,19 @@ lib.callback.register('house_robbery:server:tryStartRobbery', function(source, h
     if not isPlayerNear(source, house.entry, Config.EntryDistance) then
         notify(source, 'Musisz podejsc pod drzwi domu.', 'error')
         return { success = false }
+    end
+
+    if Config.RequireContract then
+        local contract = getContract(source)
+        if not contract then
+            notify(source, 'Najpierw wez zlecenie od brokera.', 'error')
+            return { success = false }
+        end
+
+        if contract.houseId ~= houseId then
+            notify(source, 'To nie jest dom z Twojego kontraktu.', 'error')
+            return { success = false }
+        end
     end
 
     local state = getState(houseId)
@@ -322,10 +448,12 @@ RegisterNetEvent('house_robbery:server:finishRobbery', function(houseId)
     state.alarmTriggered = false
     state.expiresAt = 0
     state.brokenStealth = 0
+    clearContract(source)
 end)
 
 AddEventHandler('playerDropped', function()
     local source = source
+    clearContract(source)
 
     for _, state in pairs(robberyState) do
         if state.activeRobber == source then

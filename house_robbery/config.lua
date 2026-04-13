@@ -7,6 +7,18 @@ Config.RequiredHourStart = 0
 Config.RequiredHourEnd = 24
 Config.EntryDistance = 2.5
 Config.SearchDistance = 2.0
+Config.ContractDuration = 20 * 60
+Config.UseMissionBroker = true
+Config.RequireContract = true
+
+Config.MissionBroker = {
+    coords = vec3(-41.17, -1748.63, 29.42),
+    heading = 48.91,
+    ped = 'g_m_m_armboss_01',
+    scenario = 'WORLD_HUMAN_AA_SMOKE',
+    label = 'Broker zlecen',
+    icon = 'fa-solid fa-user-secret'
+}
 
 Config.EntryDuration = 3500
 Config.ExitDuration = 2200

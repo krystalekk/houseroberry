@@ -8,6 +8,7 @@ Zaawansowany skrypt rabowania domow pod `es_extended`, `ox_lib` i `ox_inventory`
 - system alarmu i alertu dla policji
 - skillchecki przy wlamaniu, sejfie i przeszukiwaniu
 - rozne tier-y domow i pule lootu
+- broker zlecen z kontraktem na konkretny dom
 - dedykowany HUD NUI pokazujacy status rabunku
 - wsparcie dla `ox_target` jesli zasob jest uruchomiony
 - fallback na klasyczne `E`, jesli nie chcesz targeta
@@ -45,6 +46,7 @@ ensure ox_target
 ## Gdzie konfigurowac
 
 - balans i timery: `config.lua`
+- broker i kontrakty: `config.lua`
 - domy, spoty, sejfy i tier: `config.lua`
 - logike klienta: `client.lua`
 - logike sesji, alarmu i lootu: `server.lua`
@@ -53,6 +55,7 @@ ensure ox_target
 ## Uwagi
 
 - policja dostaje waypoint na dom po alarmie
+- kontrakt mozna wziac od brokera przed rabunkiem
 - loot jest liczony przez pule nagrod
 - safe spot moze miec osobny reward pool
 - po wyjsciu lub disconnectcie wlacza sie cooldown
