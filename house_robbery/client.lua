@@ -643,6 +643,17 @@ end)
 
 CreateThread(function()
     while true do
+        if activeHouse then
+            updateUi()
+            Wait(250)
+        else
+            Wait(1000)
+        end
+    end
+end)
+
+CreateThread(function()
+    while true do
         local sleep = 1000
         local coords = GetEntityCoords(cache.ped)
 
@@ -652,8 +663,6 @@ CreateThread(function()
         end
 
         if activeHouse then
-            updateUi()
-
             local timeLeft = robberyState.expiresAt - GetGameTimer()
             if timeLeft <= 0 then
                 notify('Czas na rabunek minal. Musisz uciekac.', 'error')
